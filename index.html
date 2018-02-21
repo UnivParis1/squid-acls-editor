@@ -1,0 +1,275 @@
+<!doctype html>
+<html>
+<meta name="viewport" content="width=device-width">
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8" >
+
+<script>
+ var restdbConf = { url: "https://restdb-test.univ-paris1.fr" };
+ var restdbPath = "/proxy-transp/admin_rules";
+</script>
+
+<style>
+  body, button, input {
+    font-family: Arial;
+  }
+  [v-cloak] {
+     display: none;
+  }
+  table {
+    border-collapse: collapse;
+  }
+  td {
+    padding: 0.6rem 0.5rem 0;
+    border: 1px solid #888;
+    
+  }
+  
+  label {
+    font-size: 50%;
+  }
+  
+  .info {
+    color: gray;
+    display: block;
+    max-width: 20em;
+    font-size: 70%;
+    white-space: nowrap;
+    overflow-x: hidden;
+    text-overflow: ellipsis;
+  }
+</style>
+
+<script src="https://restdb.univ-paris1.fr/.files/restdb.js"></script>   
+<!-- script src="https://cdnjs.cloudflare.com/ajax/libs/vue/2.5.13/vue.min.js" integrity="sha256-1Q2q5hg2YXp9fYlM++sIEXOcUb8BRSDUsQ1zXvLBqmA=" crossorigin="anonymous"></script -->
+<script src="vue.js"></script>
+
+
+<div id="app" v-cloak v-if="rules">
+<table>
+ <tr><th>Source</th><th>Destination</th><th></th></tr>
+ <tr v-for="rule in rules" class="rule">
+
+  <template v-if="rule === modifying">
+   <td>
+    <span v-for="src in rule.srcs">
+      <input v-model="src.val" @input="updateDateAndWho(src)">
+      <p></p>
+    </span>
+    <p></p>
+    <button @click="addVal(rule.srcs)">Ajouter</button>    
+   </td>
+   
+   <td>
+    <span v-for="dest in rule.dests">
+      <input v-model="dest.val" @input="updateDateAndWho(dest)" placeholder="xx.foo.bar ou .foo.bar">
+      <label>Commentaire :</label>
+      <input v-model="dest.comment" placeholder="Commentaire">
+      <p></p>
+    </span>
+    <button @click="addVal(rule.dests)">Ajouter</button>
+   </td>
+   
+   <td>
+    <button @click="setModifying(null)">Valider</button>
+   </td>
+   
+  </template>
+
+  
+  <template v-else-if="rule.srcs.length">
+   <td>
+    <span v-for="src in rule.srcs">
+      <format-val :v="src"></format-val>
+      <p/>
+    </span>
+   </td>
+   <td>
+    <span v-for="dest in rule.dests">
+      <format-val :v="dest"></format-val>
+      <p/>
+    </span>
+   </td>
+   <td>
+   <button @click="setModifying(rule)">Modifier</button>
+   </td>
+  </template>
+
+  
+ </tr>
+</table>
+
+<div v-if="toImport">
+    <textarea v-model="toImport.srcs" placeholder="Sources"></textarea>   
+    <textarea v-model="toImport.dests" placeholder="Destinations"></textarea>
+</div>
+
+<p></p>
+<button @click="addRule">Ajouter une source</button>
+<button @click="importRule">Importer une source</button>
+<p></p>
+<button @click="save" :disabled="!rules_modified">Valider les modifications</button>
+<button @click="init" :disabled="!rules_modified">Oublier les modifications</button>
+</div>
+
+<script>
+Vue.component('format-val', {
+     template: '<span :title="title">{{v.val}}  <span class="info">{{title}}</span></span>',
+     props: [ 'v' ],
+     computed: {
+  	 title() {
+             const date = new Date(this.v.date).toISOString().replace(/T.*/, '');
+    	     return date + " " + (this.v.who || '') + " " + (this.v.comment ? " : " + this.v.comment : '');
+         }
+     },
+});
+
+var restdb = restdb_init(restdbConf);
+
+const testRules  = [
+     { 
+         id: "ent", modified: false,
+         srcs: [ { val: "ent", date: new Date(), comment: '' }], 
+         dests: [ 
+             { val: 'github.com', date: new Date(), comment: 'for git clonel kjf mljrlmazkej rmlkajze mrlkajzem rkljaz emrlkja zemlkrj amzelkrj malk' },
+             { val: '.foobar', date: new Date(), comment: 'foobar' },
+         ],
+     },
+     { 
+         id: "cas", modified: false,
+         srcs: [ { val: 'cas', date: new Date('2016-02-01'), comment: 'for git' },
+                 { val: 'cas2', date: new Date('2016-02-01'), comment: 'for git clonel kjf mljrlmazkej rmlkajze mrlkajzem rkljaz emrlkja zemlkrj amzelkrj malk' } ], 
+         dests: [ 
+             { val: 'github.com', date: new Date(), comment: 'for git clonel kjf mljrlmazkej rmlkajze mrlkajzem rkljaz emrlkja zemlkrj amzelkrj malk' },
+             { val: '.foobar', date: new Date(), comment: 'foobar' },
+         ],
+     },
+];
+
+const handleErr = (f) => (
+     (err, v) => {
+         if (err) {
+             alert(JSON.stringify(err));
+         } else {
+             f(v);
+         }
+     }
+);
+
+const createVal = (val) => ({ val, date: new Date(), comment: '' });
+
+const errorDuringValidation = err => {
+     alert(err);
+     throw err;
+};
+const validateSrc = val => {
+     val.val = val.val.trim();
+     if (!val.val.match(/^\w[\w-]*\w$/)) {
+         errorDuringValidation("hostname invalide " + val.val);
+     }
+};
+
+const validateDest = val => {
+    val.val = val.val.trim();
+     if (!val.val.match(/^[\w.][\w.-]*\w$/)) {
+         errorDuringValidation("destination invalide " + val.val);
+     }
+};
+
+const app = Vue.extend({
+     data() { return {
+         modifying: null,
+         rules: null,
+         rules_modified: false,
+         toImport: null,
+     } },
+     mounted() {
+         this.init();
+     },
+     methods: {
+         init() {
+             this.modifying = null;
+             this.rules = null;
+             restdb.get(restdbPath, { allowedRedirect: true }, handleErr(data => {
+                 for (id in data) {
+                     data[id] = { ...data[id], id, modified: false };
+                 }
+                 this.rules = Object.values(data);
+                 //this.rules = testRules;
+             }));
+         },
+  	 updateDateAndWho(val) {
+    	     val.date = new Date();
+             val.who = this.loggedUser;
+         },
+         setModifying(rule) {
+             if (this.modifying) this.stopModifying();
+    	     this.modifying = rule;
+             this.modifying_backup = JSON.stringify(rule);
+         },
+         stopModifying() {
+             let current = this.modifying;
+             
+             current.srcs = current.srcs.filter(val => val.val);
+             current.dests = current.dests.filter(val => val.val);
+             current.srcs.forEach(validateSrc);
+             current.dests.forEach(validateDest);
+
+             if (this.modifying_backup === JSON.stringify(current)) return;
+             
+             if (!current.id) {
+                 current.id = current.srcs[0] && current.srcs[0].val;
+             }
+             if (!current.id) {
+                 // user asked when a new rule, but it is empty, discard it
+                 this.rules = this.rules.filter(rule => rule !== current);                 
+             }                 
+             current.modified = true;
+             this.rules_modified = true;
+         },         
+         addVal(list) {
+    	     list.push(createVal(''));
+         },
+         addRule() {
+             let rule = { srcs: [], dests: [], modified: false };
+             this.addVal(rule.srcs);
+             this.addVal(rule.dests);
+             this.rules.push(rule);
+             this.setModifying(rule);
+         },
+         save() {
+             this.setModifying(null);
+             this.rules.forEach(rule => {
+                 let { id, modified, ...rule_ } = rule;
+                 if (id && modified) {
+                     if (rule.srcs.length === 0) rule_ = null;
+                     restdb.set(restdbPath + "/" + id, rule_, {}, handleErr(_ => delete rule.modified));
+                 }
+             });
+             this.rules_modified = false;
+         },
+         importRule() {
+             if (this.toImport) {
+                 const [ srcs, dests ] = [ 'srcs', 'dests' ].map(kind => this.toImport[kind].split(/\n/).map(createVal));
+                 const rule = { srcs, dests, modified: true };
+                 this.rules.push(rule);
+                 this.setModifying(rule);
+                 this.toImport = null;
+             } else {
+                 this.setModifying(null);
+                 this.toImport = { srcs: '', dests: '' };
+             }
+         }
+     },
+});
+
+
+const on_pE_load = pE => {
+    const data = { loggedUser: pE.DATA.user };
+    new app({ el: '#app', data });
+};
+window.prolongation_ENT_args = { delegateAuth: true, onload: on_pE_load };
+ 
+</script>
+<script src="https://ent.univ-paris1.fr/ProlongationENT/loader.js"></script>
+
+</html>
